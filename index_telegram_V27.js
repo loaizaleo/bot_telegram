@@ -8,6 +8,11 @@ const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const { Telegraf } = require('telegraf');
+const { registrarFoto } = require('./fotos_index');
+
+const {initDevoluciones, procesarDevolucion } = require('./devoluciones');
+
+
 
 // ==================== CONFIGURACIÓN ====================
 const app = express();
@@ -18,6 +23,9 @@ const BASE_DIR = path.join(__dirname, 'sistema_bodega');
 const FOTOS_DIR = path.join(BASE_DIR, 'fotos');
 const REPORTES_DIR = path.join(BASE_DIR, 'reportes');
 const LOGS_DIR = path.join(BASE_DIR, 'logs');
+
+//MODULO SUMADOR DE VENTAS
+const sumadorVentas = require('./sumador_ventas_V3.js');
 
 // Crear todos los directorios necesarios
 [FOTOS_DIR, REPORTES_DIR, LOGS_DIR].forEach(dir => {
@@ -49,9 +57,17 @@ console.log('🚀 Sistema de Bodega Telegram - Iniciando...\n');
 /**
  * Extrae precio de un texto (caption o mensaje)
  */
+function obtenerFechaLocalISO() {
+    const hoy = new Date();
+    const y = hoy.getFullYear();
+    const m = String(hoy.getMonth() + 1).padStart(2, '0');
+    const d = String(hoy.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
+
 function extraerPrecio(texto) {
     if (!texto || typeof texto !== 'string') return null;
-    
+
     // Patrones para extraer precio (similares a WhatsApp)
     const patrones = [
         /\$?\s*(\d{2,5}(?:\.\d{2})?)\b/,                    // $120, 120 (número principal)
@@ -62,18 +78,18 @@ function extraerPrecio(texto) {
         /cobr[oó]\s*:?\s*\$?\s*(\d{2,5})/i,
         /total\s*:?\s*\$?\s*(\d{2,5})/i
     ];
-    
+
     for (const patron of patrones) {
         const match = texto.match(patron);
         if (match && match[1]) {
             const precioNumero = match[1];
             const precio = parseFloat(precioNumero);
-            if (precio >= 10 && precio <= 100000) {
+            if (precio >= 50 && precio <= 9000) {
                 return precioNumero;
             }
         }
     }
-    
+
     return null;
 }
 
@@ -82,28 +98,28 @@ function extraerPrecio(texto) {
  */
 function esSoloPrecio(texto) {
     if (!texto) return false;
-    
+
     const textoLimpio = texto.trim();
-    
+
     // Casos donde es solo un número
     if (/^\$?\s*\d{2,5}\s*$/.test(textoLimpio)) {
         return true;
     }
-    
+
     // Casos como "110", "$120", " 130 ", etc.
     const soloNumero = textoLimpio.replace(/[^\d]/g, '');
     if (soloNumero.length >= 2 && soloNumero.length <= 5) {
         const textoOriginalSinEspacios = textoLimpio.replace(/\s+/g, '');
         const soloNumeroConSignoPesos = soloNumero + '$';
         const soloSignoPesosNumero = '$' + soloNumero;
-        
-        if (textoOriginalSinEspacios === soloNumero || 
+
+        if (textoOriginalSinEspacios === soloNumero ||
             textoOriginalSinEspacios === soloNumeroConSignoPesos ||
             textoOriginalSinEspacios === soloSignoPesosNumero) {
             return true;
         }
     }
-    
+
     return false;
 }
 
@@ -272,7 +288,7 @@ function obtenerListaLogs() {
             return [];
         }
 
-        const hoy = new Date().toISOString().split('T')[0];
+        const hoy = obtenerFechaLocalISO();
         const archivosLog = [];
 
         const grupos = fs.readdirSync(LOGS_DIR);
@@ -327,7 +343,7 @@ function obtenerListaLogs() {
 function guardarLog(grupo, usuario, mensaje, tipo = 'texto', esPrecio = false) {
     try {
         const fecha = new Date();
-        const fechaStr = fecha.toISOString().split('T')[0];
+        const fechaStr = obtenerFechaLocalISO();
         const horaStr = fecha.toLocaleTimeString('es-CO', { hour12: false });
 
         const nombreGrupo = grupo.replace(/[^a-zA-Z0-9]/g, '_');
@@ -340,7 +356,7 @@ function guardarLog(grupo, usuario, mensaje, tipo = 'texto', esPrecio = false) {
         const logPath = path.join(logDir, `${fechaStr}.txt`);
 
         let mensajeParaLog = mensaje;
-        
+
         if (esPrecio) {
             const precioExtraido = extraerPrecio(mensaje);
             if (precioExtraido) {
@@ -359,10 +375,10 @@ function guardarLog(grupo, usuario, mensaje, tipo = 'texto', esPrecio = false) {
     }
 }
 
-/**
- * Guarda foto desde Telegram con caption
- */
-async function guardarFotoTelegram(fileId, grupoNombre, usuario, caption = null) {
+
+// * Guarda foto desde Telegram con caption
+async function guardarFotoTelegram(ctx, fileId, grupoNombre, usuario, caption = null, infoCaption = null) {
+//async function guardarFotoTelegram(ctx, fileId, grupoNombre, usuario, caption = null) {
     try {
         console.log(`   📸 Descargando foto de ${usuario}...`);
         if (caption) {
@@ -388,7 +404,7 @@ async function guardarFotoTelegram(fileId, grupoNombre, usuario, caption = null)
         console.log(`   ✅ Descargado: ${buffer.length} bytes`);
 
         const fecha = new Date();
-        const fechaStr = fecha.toISOString().split('T')[0];
+        const fechaStr = obtenerFechaLocalISO();
         const horaStr = fecha.toLocaleTimeString('es-CO', { hour12: false });
 
         const nombreSeguro = grupoNombre.replace(/[^a-zA-Z0-9]/g, '_');
@@ -397,10 +413,33 @@ async function guardarFotoTelegram(fileId, grupoNombre, usuario, caption = null)
         fs.mkdirSync(carpetaGrupo, { recursive: true });
 
         const timestamp = Date.now();
-        const nombreArchivo = `${timestamp}_${horaStr.replace(/:/g, '-')}.jpg`;
+        //const nombreArchivo = `${timestamp}_${horaStr.replace(/:/g, '-')}.jpg`;
+        const nombreArchivo = `${timestamp}.jpg`;
         const rutaCompleta = path.join(carpetaGrupo, nombreArchivo);
 
+        // 💾 Guardar archivo
         fs.writeFileSync(rutaCompleta, buffer);
+
+        registrarFoto({
+            chatId: ctx.chat.id,
+            messageId: ctx.message.message_id,
+            archivo: nombreArchivo,
+            usuario,
+            grupo: nombreSeguro,
+            fecha: fechaStr,
+
+            info: {
+                tallas: infoCaption?.tallas || [],
+                color: infoCaption?.color || '',
+                marca: infoCaption?.marca || '',
+                tipo: infoCaption?.tipoProducto || ''
+            }
+
+        });
+
+
+        // 📝 Registrar archivo en log (formato WhatsApp)
+        guardarLog(grupoNombre, usuario, `[Archivo: ${nombreArchivo}]`, 'archivo');
 
         console.log(`   💾 Guardado: ${nombreSeguro}/${fechaStr}/${nombreArchivo}`);
 
@@ -425,7 +464,7 @@ async function guardarFotoTelegram(fileId, grupoNombre, usuario, caption = null)
  */
 function generarReporteHTML() {
     try {
-        const fecha = new Date().toISOString().split('T')[0];
+        const fecha = obtenerFechaLocalISO();
         const fotosPendientes = Array.from(estado.pendientes.values());
         const fotosConfirmadas = Array.from(estado.confirmadas.values());
 
@@ -889,6 +928,7 @@ app.get('/', (req, res) => {
 
 // Crear instancia del bot
 const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
+initDevoluciones(bot);
 
 // Estado en memoria
 let estado = {
@@ -951,9 +991,111 @@ bot.command('myid', async (ctx) => {
         { parse_mode: 'Markdown' }
     ).catch(() => { });
 });
+//Comando TOTAL
+// Comando: /total - Total de ventas (hoy o fecha específica)
+bot.command('total', async (ctx) => {
+    const usuario = ctx.from.first_name || ctx.from.username || 'Usuario';
+    const grupo = ctx.chat.title || 'Chat privado';
+
+    guardarLog(grupo, usuario, '/total', 'comando');
+
+    try {
+        // Extraer parámetros del mensaje
+        const texto = ctx.message.text.split(' ');
+        let fechaParam = null;
+
+        // Verificar si se proporcionó una fecha
+        if (texto.length > 1) {
+            const posibleFecha = texto[1];
+
+            // Validar formato de fecha (YYYY-MM-DD)
+            const regexFecha = /^\d{4}-\d{2}-\d{2}$/;
+            if (regexFecha.test(posibleFecha)) {
+                fechaParam = posibleFecha;
+
+                // Validar que sea una fecha válida
+                const fechaObj = new Date(posibleFecha + 'T00:00:00');
+                if (isNaN(fechaObj.getTime())) {
+                    await ctx.reply(
+                        '❌ **Fecha inválida**\n\n' +
+                        'Usa formato: `/total 2026-02-03`\n' +
+                        'Ejemplos:\n' +
+                        '• `/total` (ventas de hoy)\n' +
+                        '• `/total 2026-02-03` (ventas del 3 de febrero)\n' +
+                        '• `/total 2026-01-31` (ventas del 31 de enero)',
+                        { parse_mode: 'Markdown' }
+                    ).catch(() => { });
+                    return;
+                }
+            } else {
+                await ctx.reply(
+                    '❌ **Formato de fecha incorrecto**\n\n' +
+                    'Usa formato: `/total AAAA-MM-DD`\n' +
+                    'Ejemplo: `/total 2026-02-03`',
+                    { parse_mode: 'Markdown' }
+                ).catch(() => { });
+                return;
+            }
+        }
+
+        // Determinar mensaje según si hay fecha específica
+        let mensajeProcesandoTexto = '🔄 Calculando total de ventas...';
+        if (fechaParam) {
+            mensajeProcesandoTexto = `🔄 Calculando ventas del ${fechaParam}...`;
+        }
+
+        const mensajeProcesando = await ctx.reply(mensajeProcesandoTexto, {
+            parse_mode: 'Markdown'
+        }).catch(() => null);
+
+        // Calcular total (con o sin fecha específica)
+        const resultado = await sumadorVentas.calcularTotalVentas(fechaParam);
+
+        // Responder con el resultado
+        await ctx.reply(resultado.mensaje, {
+            parse_mode: 'Markdown',
+            reply_to_message_id: ctx.message.message_id
+        }).catch(() => { });
+
+        // Eliminar mensaje de "procesando" si existe
+        if (mensajeProcesando) {
+            setTimeout(async () => {
+                try {
+                    await ctx.deleteMessage(mensajeProcesando.message_id);
+                } catch (e) { }
+            }, 2000);
+        }
+
+    } catch (error) {
+        console.error('❌ Error en comando /total:', error);
+        await ctx.reply(
+            '❌ Error calculando total de ventas. Verifica los logs.',
+            { parse_mode: 'Markdown' }
+        ).catch(() => { });
+    }
+});
+
+// Comando: /ayudatotal - Ayuda sobre el comando total
+bot.command('ayudatotal', async (ctx) => {
+    await ctx.reply(
+        '📋 **AYUDA - COMANDO /total**\n\n' +
+        '**Sintaxis:**\n' +
+        '• `/total` - Ventas de hoy\n' +
+        '• `/total AAAA-MM-DD` - Ventas de fecha específica\n\n' +
+        '**Ejemplos:**\n' +
+        '• `/total` → Ventas del día actual\n' +
+        '• `/total 2026-02-03` → Ventas del 3 de febrero 2026\n' +
+        '• `/total 2026-01-31` → Ventas del 31 de enero 2026\n\n' +
+        '**Otros comandos relacionados:**\n' +
+        '• `/totalmes` - Total mensual\n' +
+        '• `/ultimas 5` - Últimas 5 ventas',
+        { parse_mode: 'Markdown' }
+    ).catch(() => { });
+});
 
 // Manejo de fotos CON CAPTION
 bot.on('photo', async (ctx) => {
+    let infoCaption = null;
     const chatId = ctx.chat.id.toString();
     const chatTitle = ctx.chat.title || 'Sin nombre';
     const usuario = `${ctx.from.first_name || ''} ${ctx.from.last_name || ''}`.trim() || ctx.from.username || 'Usuario';
@@ -976,10 +1118,32 @@ bot.on('photo', async (ctx) => {
     try {
         const photo = ctx.message.photo[ctx.message.photo.length - 1];
         const fileId = photo.file_id;
-        
-        const fotoInfo = await guardarFotoTelegram(fileId, chatTitle, usuario, caption);
 
-        guardarLog(chatTitle, usuario, '[Foto enviada]', 'foto');
+        // 🔹 Guardar precio ANTES (solo ventas)
+        if (tipoGrupo === 'ventas' && caption) {
+            const match = caption.match(/\b(\d{2,4})\b/);
+            if (match) {
+                const precio = parseInt(match[1], 10);
+                if (precio >= 50 && precio <= 9000) {
+                    guardarLog(chatTitle, usuario, precio.toString(), 'venta');
+                }
+            }
+        }
+
+        if (caption) {
+            infoCaption = extraerInformacionMejorada(caption);
+        }
+
+        const fotoInfo = await guardarFotoTelegram(ctx, fileId, chatTitle, usuario, caption, infoCaption);
+        
+        if (tipoGrupo !== 'ventas') {
+            if (caption) {
+                guardarLog(chatTitle, usuario, caption, 'foto');
+            } else {
+                guardarLog(chatTitle, usuario, '[Foto enviada: ${nombre}]', 'foto');
+            }
+        }
+
 
         if (tipoGrupo === 'confirmacion') {
             estado.pendientes.set(fileId, {
@@ -989,16 +1153,16 @@ bot.on('photo', async (ctx) => {
                 chatTitle: chatTitle
             });
 
-            let infoCaption = null;
+            //let infoCaption = null;
             if (caption) {
                 console.log(`   📝 Caption en confirmación: ${caption}`);
                 infoCaption = extraerInformacionMejorada(caption);
-                
+
                 if (infoCaption.tallas.length > 0 || infoCaption.color || infoCaption.tipoProducto || infoCaption.marca) {
                     estado.pendientes.get(fileId).infoCaption = infoCaption;
-                    
+
                     await ctx.reply(
-                        `📸 **Foto registrada para confirmación**\n\n` +
+                        `📸 *Foto por confirmar*\n\n` /*+
                         `✅ Guardada: ${fotoInfo.archivo}\n` +
                         `📏 Dimensiones: ${photo.width}x${photo.height}\n\n` +
                         `📝 **Información detectada en descripción:**\n` +
@@ -1011,11 +1175,11 @@ bot.on('photo', async (ctx) => {
                         `• "v talla 38" para añadir/modificar\n` +
                         `• "va nike verde" para especificar marca/color\n\n` +
                         `📊 Ver en: http://localhost:${PORT}`,
-                        { parse_mode: 'Markdown' }
+                        { parse_mode: 'Markdown' }*/
                     ).catch(() => { });
                 } else {
                     await ctx.reply(
-                        `📸 **Foto registrada para confirmación**\n\n` +
+                        `📸 *Foto por confirmar*\n\n`/* +
                         `✅ Guardada: ${fotoInfo.archivo}\n` +
                         `📏 Dimensiones: ${photo.width}x${photo.height}\n\n` +
                         `📝 **Descripción:** ${caption.substring(0, 100)}${caption.length > 100 ? '...' : ''}\n\n` +
@@ -1024,12 +1188,12 @@ bot.on('photo', async (ctx) => {
                         `• "va 40 y 42"\n` +
                         `• "c pantalón negro"\n\n` +
                         `📊 Ver en: http://localhost:${PORT}`,
-                        { parse_mode: 'Markdown' }
+                        { parse_mode: 'Markdown' }*/
                     ).catch(() => { });
                 }
             } else {
                 await ctx.reply(
-                    `📸 **Foto registrada para confirmación**\n\n` +
+                    `📸 *Foto por confirmar*\n\n` /*+
                     `✅ Guardada: ${fotoInfo.archivo}\n` +
                     `📏 Dimensiones: ${photo.width}x${photo.height}\n\n` +
                     `📝 **Responde a este mensaje con:**\n` +
@@ -1037,27 +1201,28 @@ bot.on('photo', async (ctx) => {
                     `• "va 40 y 42"\n` +
                     `• "c pantalón negro"\n\n` +
                     `📊 Ver en: http://localhost:${PORT}`,
-                    { parse_mode: 'Markdown' }
+                    { parse_mode: 'Markdown' }*/
                 ).catch(() => { });
             }
 
         } else if (tipoGrupo === 'ventas') {
             let respuesta = `✅ **Foto de venta guardada**\n`;
             respuesta += `📁 ${fotoInfo.archivo}\n`;
-            
+
             let precioCaption = null;
             if (caption) {
                 precioCaption = extraerPrecio(caption);
-                
+
                 if (precioCaption) {
                     estado.ultimoPrecioFoto.set(fileId, {
                         precio: precioCaption,
                         timestamp: Date.now(),
                         usuario: usuario
                     });
-                    
-                    guardarLog(chatTitle, usuario, `$ ${precioCaption}`, 'texto', true);
-                    
+
+                    if (!ctx.message.photo) {
+                        guardarLog(chatTitle, usuario, `$ ${precioCaption}`, 'texto', true);
+                    }
                     respuesta += `💰 **Precio registrado:** $${precioCaption}\n`;
                 } else {
                     respuesta += `📝 Descripción: ${caption.substring(0, 50)}${caption.length > 50 ? '...' : ''}\n`;
@@ -1066,7 +1231,7 @@ bot.on('photo', async (ctx) => {
             } else {
                 respuesta += `📝 Puedes añadir el precio en un mensaje aparte\n`;
             }
-            
+
             if (!precioCaption) {
                 respuesta += `💡 Ejemplo: "120" o "$ 130"`;
             }
@@ -1092,6 +1257,8 @@ bot.on('photo', async (ctx) => {
 
 // Manejo de mensajes de texto
 bot.on('text', async (ctx) => {
+    // 🔥 Primero: procesar devoluciones
+    await procesarDevolucion(ctx);
     const chatId = ctx.chat.id.toString();
     const chatTitle = ctx.chat.title || 'Privado';
     const usuario = `${ctx.from.first_name || ''} ${ctx.from.last_name || ''}`.trim() || ctx.from.username || 'Usuario';
@@ -1121,9 +1288,9 @@ bot.on('text', async (ctx) => {
             if (estado.pendientes.has(fileId)) {
                 const fotoData = estado.pendientes.get(fileId);
                 const info = extraerInformacionMejorada(mensaje);
-                
+
                 let infoCombinada = { ...info };
-                
+
                 if (fotoData.infoCaption) {
                     infoCombinada.tallas = info.tallas.length > 0 ? info.tallas : fotoData.infoCaption.tallas;
                     infoCombinada.color = info.color || fotoData.infoCaption.color;
@@ -1157,10 +1324,10 @@ bot.on('text', async (ctx) => {
                 guardarLog(chatTitle, usuario, `[CONFIRMADO] ${infoTexto}`, 'confirmacion');
 
                 let respuesta = `✅ **CONFIRMADO CORRECTAMENTE**\n\n`;
-                respuesta += `📁 Archivo: ${fotoData.archivo}\n`;
+                //respuesta += `📁 Archivo: ${fotoData.archivo}\n`;
                 respuesta += `👤 Confirmado por: ${usuario}\n\n`;
 
-                if (infoCombinada.tallas.length > 0) {
+                /*if (infoCombinada.tallas.length > 0) {
                     respuesta += `📏 Talla${infoCombinada.tallas.length > 1 ? 's' : ''}: ${infoCombinada.tallas.join(', ')}\n`;
                 }
                 if (infoCombinada.color) respuesta += `🎨 Color: ${infoCombinada.color}\n`;
@@ -1168,8 +1335,8 @@ bot.on('text', async (ctx) => {
                 if (infoCombinada.tipoProducto) respuesta += `👕 Tipo: ${infoCombinada.tipoProducto}\n`;
                 if (infoCombinada.esDevolucion) respuesta += `🔄 **ES UNA DEVOLUCIÓN**\n`;
                 if (infoCombinada.precio) respuesta += `💰 Precio: $${infoCombinada.precio}\n`;
-
-                respuesta += `\n📊 Ver reporte: http://localhost:${PORT}`;
+                
+                respuesta += `\n📊 Ver reporte: http://localhost:${PORT}`;*/
 
                 await ctx.reply(respuesta, { parse_mode: 'Markdown' }).catch(() => { });
 
@@ -1184,33 +1351,33 @@ bot.on('text', async (ctx) => {
     else if (chatId === GRUPO_VENTAS_ID) {
         const precio = extraerPrecio(mensaje);
         const esSoloUnPrecio = esSoloPrecio(mensaje);
-        
+
         if (precio && esSoloUnPrecio) {
             let esReplyAFoto = false;
             let fileIdReply = null;
-            
+
             if (ctx.message.reply_to_message?.photo) {
                 const repliedPhoto = ctx.message.reply_to_message.photo[ctx.message.reply_to_message.photo.length - 1];
                 fileIdReply = repliedPhoto.file_id;
                 esReplyAFoto = true;
             }
-            
+
             if (esReplyAFoto && fileIdReply) {
                 const precioExistente = estado.ultimoPrecioFoto.get(fileIdReply);
-                
+
                 if (precioExistente && Date.now() - precioExistente.timestamp < 5000) {
                     console.log(`   ⚠️  Precio duplicado ignorado para foto ${fileIdReply.substring(0, 10)}...`);
                 } else {
                     guardarLog(chatTitle, usuario, `$ ${precio}`, 'texto', true);
-                    
+
                     estado.ultimoPrecioFoto.set(fileIdReply, {
                         precio: precio,
                         timestamp: Date.now(),
                         usuario: usuario
                     });
-                    
+
                     console.log(`   💰 Precio registrado: $${precio} (reply a foto)`);
-                    
+
                     await ctx.reply(
                         `💰 **Precio registrado:** $${precio}\n` +
                         `✅ Asociado a la foto anterior`,
@@ -1220,7 +1387,7 @@ bot.on('text', async (ctx) => {
             } else {
                 guardarLog(chatTitle, usuario, `$ ${precio}`, 'texto', true);
                 console.log(`   💰 Precio registrado: $${precio} (sin foto)`);
-                
+
                 await ctx.reply(
                     `💰 **Precio registrado:** $${precio}\n` +
                     `💡 Envía una foto y responde con el precio para asociarlo`,
@@ -1314,6 +1481,12 @@ async function iniciarSistema() {
         console.log(`   • Reportes diarios: http://localhost:${PORT}/reportes/`);
         console.log(`   • Fotos guardadas: http://localhost:${PORT}/fotos/`);
         console.log(`   • Logs actividad: http://localhost:${PORT}/logs/`);
+
+        console.log('💡 **COMANDOS DISPONIBLES EN TELEGRAM:**');
+        console.log('   📊 Ventas: /total [fecha] | /totalmes | /ultimas [n]');
+        console.log('   🤖 Sistema: /status | /groupid | /myid');
+        console.log('   📝 Fecha formato: YYYY-MM-DD (ej: 2026-02-03)');
+        console.log('   ❓ Ayuda: /ayudatotal');
 
         console.log('\n⏳ Sistema listo. Presiona Ctrl+C para salir.\n');
 
