@@ -42,6 +42,8 @@ Todo se guarda en la carpeta `sistema_bodega/` (`fotos/`, `reportes/`, `logs/`),
 | Comando | Descripción |
 |---|---|
 | `/total [AAAA-MM-DD]` | Total de ventas de hoy o de la fecha indicada. |
+| `/totalmes [AAAA-MM]` | Total de ventas del mes actual o del mes indicado. |
+| `/ultimas [n]` | Últimas `n` ventas del día (10 por defecto, máximo 50). |
 | `/ayudatotal` | Ayuda del comando `/total`. |
 | `/status` | Estado del sistema. |
 | `/groupid` | ID del chat actual (para configurar el `.env`). |
@@ -80,13 +82,11 @@ Con el bot en marcha:
 4. Inicie el bot:
 
    ```bash
-   node index_telegram_V27.js
+   npm start
    ```
 
    En Windows también puede usar `monitor_telegram.bat` (ajuste la ruta que tiene dentro).
 
 ## Notas
 
-- **Nunca suba el archivo `.env` al repositorio**: contiene el token del bot. Conviene agregar un `.gitignore` con `.env`, `node_modules/`, `sistema_bodega/` y `fotos_index.json`.
-- `npm start` ejecuta `index_telegram_V20.js` (versión antigua), mientras que el `.bat` usa la V27. Para usar la versión actual con `npm start`, cambie `main` y `start` en `package.json`.
-- La ayuda de `/ayudatotal` menciona `/totalmes` y `/ultimas`, pero esos comandos todavía no están implementados en la V27.
+- **Nunca suba el archivo `.env` al repositorio**: contiene el token del bot. El `.gitignore` ya lo excluye, junto con `node_modules/`, `sistema_bodega/` y `fotos_index.json`.

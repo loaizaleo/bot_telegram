@@ -1,0 +1,9 @@
+# Configuración con el token del bot (nunca subir)
+.env
+
+# Dependencias
+node_modules/
+
+# Datos generados por el bot
+sistema_bodega/
+fotos_index.json

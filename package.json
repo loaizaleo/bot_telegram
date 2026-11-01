@@ -2,10 +2,10 @@
   "name": "bot-telegram-bodega",
   "version": "2.0.0",
   "description": "Bot de Telegram para gestión de bodega",
-  "main": "index_telegram_V20.js",
+  "main": "index_telegram_V27.js",
   "scripts": {
-    "start": "node index_telegram_V20.js",
-    "dev": "nodemon index_telegram_V20.js"
+    "start": "node index_telegram_V27.js",
+    "dev": "nodemon index_telegram_V27.js"
   },
   "dependencies": {
     "dotenv": "^17.2.3",

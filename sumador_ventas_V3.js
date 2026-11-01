@@ -150,6 +150,51 @@ async function calcularTotalVentas(fecha = null, grupo = 'Ventas_55') {
 }
 
 /* ======================================================
+   TOTAL DEL MES (suma los logs diarios del mes)
+====================================================== */
+async function calcularTotalMes(mes = null, grupo = 'Ventas_55') {
+    if (!mes) {
+        mes = obtenerFechaLocalISO().slice(0, 7); // YYYY-MM
+    }
+
+    const [anio, numMes] = mes.split('-').map(Number);
+    const diasDelMes = new Date(anio, numMes, 0).getDate();
+
+    let total = 0;
+    let cantidadVentas = 0;
+    let diasConVentas = 0;
+
+    for (let dia = 1; dia <= diasDelMes; dia++) {
+        const fecha = `${mes}-${String(dia).padStart(2, '0')}`;
+        const res = await calcularTotalVentas(fecha, grupo);
+
+        if (res.cantidadVentas > 0) {
+            total += res.total;
+            cantidadVentas += res.cantidadVentas;
+            diasConVentas++;
+        }
+    }
+
+    const formato = new Intl.NumberFormat('es-CO', {
+        style: 'currency',
+        currency: 'COP'
+    });
+
+    const mensaje =
+        `📅 **VENTAS DEL MES ${mes}**\n\n` +
+        `💰 **Total:** ${formato.format(total)}\n` +
+        `📦 **Cantidad de ventas:** ${cantidadVentas}\n` +
+        `📆 **Días con ventas:** ${diasConVentas}`;
+
+    return {
+        total,
+        cantidadVentas,
+        diasConVentas,
+        mensaje
+    };
+}
+
+/* ======================================================
    ÚLTIMAS N VENTAS DEL DÍA
 ====================================================== */
 async function obtenerUltimasVentas(limite = 10) {
@@ -186,6 +231,7 @@ async function obtenerUltimasVentas(limite = 10) {
 ====================================================== */
 module.exports = {
     calcularTotalVentas,
+    calcularTotalMes,
     obtenerUltimasVentas,
     extraerPrecioDeLinea,
     obtenerFechaLocalISO

@@ -1075,6 +1075,79 @@ bot.command('total', async (ctx) => {
     }
 });
 
+// Comando: /totalmes - Total del mes (actual o AAAA-MM)
+bot.command('totalmes', async (ctx) => {
+    const usuario = ctx.from.first_name || ctx.from.username || 'Usuario';
+    const grupo = ctx.chat.title || 'Chat privado';
+
+    guardarLog(grupo, usuario, '/totalmes', 'comando');
+
+    try {
+        const texto = ctx.message.text.split(' ');
+        let mesParam = null;
+
+        if (texto.length > 1) {
+            if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(texto[1])) {
+                await ctx.reply(
+                    '❌ **Formato de mes incorrecto**\n\n' +
+                    'Usa formato: `/totalmes AAAA-MM`\n' +
+                    'Ejemplo: `/totalmes 2026-02`',
+                    { parse_mode: 'Markdown' }
+                ).catch(() => { });
+                return;
+            }
+            mesParam = texto[1];
+        }
+
+        const resultado = await sumadorVentas.calcularTotalMes(mesParam);
+
+        await ctx.reply(resultado.mensaje, {
+            parse_mode: 'Markdown',
+            reply_to_message_id: ctx.message.message_id
+        }).catch(() => { });
+
+    } catch (error) {
+        console.error('❌ Error en comando /totalmes:', error);
+        await ctx.reply('❌ Error calculando el total del mes. Verifica los logs.').catch(() => { });
+    }
+});
+
+// Comando: /ultimas [n] - Últimas n ventas del día
+bot.command('ultimas', async (ctx) => {
+    const usuario = ctx.from.first_name || ctx.from.username || 'Usuario';
+    const grupo = ctx.chat.title || 'Chat privado';
+
+    guardarLog(grupo, usuario, '/ultimas', 'comando');
+
+    try {
+        const texto = ctx.message.text.split(' ');
+        let limite = 10;
+
+        if (texto.length > 1) {
+            const n = parseInt(texto[1], 10);
+            if (isNaN(n) || n < 1 || n > 50) {
+                await ctx.reply(
+                    '❌ Indica un número entre 1 y 50.\nEjemplo: `/ultimas 5`',
+                    { parse_mode: 'Markdown' }
+                ).catch(() => { });
+                return;
+            }
+            limite = n;
+        }
+
+        const resultado = await sumadorVentas.obtenerUltimasVentas(limite);
+
+        await ctx.reply(resultado.mensaje, {
+            parse_mode: 'Markdown',
+            reply_to_message_id: ctx.message.message_id
+        }).catch(() => { });
+
+    } catch (error) {
+        console.error('❌ Error en comando /ultimas:', error);
+        await ctx.reply('❌ Error obteniendo las últimas ventas. Verifica los logs.').catch(() => { });
+    }
+});
+
 // Comando: /ayudatotal - Ayuda sobre el comando total
 bot.command('ayudatotal', async (ctx) => {
     await ctx.reply(
@@ -1087,7 +1160,8 @@ bot.command('ayudatotal', async (ctx) => {
         '• `/total 2026-02-03` → Ventas del 3 de febrero 2026\n' +
         '• `/total 2026-01-31` → Ventas del 31 de enero 2026\n\n' +
         '**Otros comandos relacionados:**\n' +
-        '• `/totalmes` - Total mensual\n' +
+        '• `/totalmes` - Total del mes actual\n' +
+        '• `/totalmes 2026-02` - Total de un mes específico\n' +
         '• `/ultimas 5` - Últimas 5 ventas',
         { parse_mode: 'Markdown' }
     ).catch(() => { });
